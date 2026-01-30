@@ -1,0 +1,63 @@
+DRep ID: drep1y2eu92qwy875nlslg3ahlh0hy5vhzpkrjay88ptvdp0z6cqm9h25x
+- /drep_info:
+  - active_epoch_no: null
+  - meta_url: https://most-brass-sun.quicknode-ipfs.com/ipfs/QmdKoc5wYKpSyyQBPz3fnkWVUujR2feaLedDidyCYV6TZ3
+  - meta_hash: 61e5d99775e1c4fff7b903b3e0654dd9e1d24a7e596cf5b6a55aea13f0307e6b
+- /drep_updates (due to missing active_epoch_no):
+  - block_time (of 'registered' event): 1732720885
+  - epoch_no (derived from block_time via /tx_info): 524
+---
+DRep ID: drep1yglrf4el8gghum239fggvfrau25k2576y4dvcz65r2ukj8sqpsc2k
+- /drep_info:
+  - active_epoch_no: null
+  - meta_url: https://raw.githubusercontent.com/Cerkoryn/governance-reference/refs/heads/main/Cerkoryn.jsonld
+  - meta_hash: c881b5413ab2047859fd480608cfd6c94fc38951c97f6edcdcd3e2e88d703415
+- /drep_updates (due to missing active_epoch_no):
+  - block_time (of 'registered' event): 1725394292
+  - epoch_no (derived from block_time via /tx_info): 507
+---
+DRep ID: drep1yfjez5zup0gystdvc933w2mn8k64hcy3krvc2namluwjxdcfhm8wd
+- /drep_info:
+  - active_epoch_no: null
+  - meta_url: https://raw.githubusercontent.com/sidan-lab/DRep/main/sidan-lab.jsonld
+  - meta_hash: 0e84662b672077968494f620f91e49e3daaf6c983707ae6bd227709dbd453b56
+- /drep_updates (due to missing active_epoch_no):
+  - block_time (of 'registered' event): 1725871611
+  - epoch_no (derived from block_time via /tx_info): 508
+---
+DRep ID: drep1ytcv4ax77s0enqef56qjflf4d8zjgxulukme9uf5p8cfaagysjppn
+- /drep_info:
+  - active_epoch_no: null
+  - meta_url: https://most-brass-sun.quicknode-ipfs.com/ipfs/QmdZHVLb2PPab8fpXcP7KVcd2MFhzsU83kHEyyJissAvj3
+  - meta_hash: 4ac43307bc300f0b90895caddc8aec0e04150a8d60583d4b427f0de99ff35d7c
+- /drep_updates (due to missing active_epoch_no):
+  - block_time (of 'registered' event): 1734127672
+  - epoch_no (derived from block_time via /tx_info): 527
+---
+DRep ID: drep1ytzshxuma6cwrnlv2ucyclfqw3k4nu4nuudmh2z87j9hncsk9dhy4
+- /drep_info:
+  - active_epoch_no: null
+  - meta_url: https://raw.githubusercontent.com/adosiawolf/m/master/drep-metadata.json
+  - meta_hash: 7ebff1083e350826d1264ab34b83af525da86ed89fd9d66c14429b5cedf04086
+- /drep_updates (due to missing active_epoch_no):
+  - block_time (of 'registered' event): 1725562969
+  - epoch_no (derived from block_time via /tx_info): 507
+---
+DRep ID: drep1yfa8r8r36x7x05htftce7qhafrn5nzzr6vazy95pzy6y5dqac0ss7
+- /drep_info:
+  - active_epoch_no: null
+  - meta_url: https://most-brass-sun.quicknode-ipfs.com/ipfs/QmRcgFa3sq6mVdwTsT6mnps4RhX7P3p33t1anBT7PR3e71
+  - meta_hash: 12be71796ce29aa6f97c8b2839e9694f618157dd71d4ed57d5620984b5677911
+- /drep_updates (due to missing active_epoch_no):
+  - block_time (of 'registered' event): 1725279422
+  - epoch_no (derived from block_time via /tx_info): 507
+---
+DRep ID: drep1yv4uesaj92wk8ljlsh4p7jzndnzrflchaz5fzug3zxg4naqkpeas3
+- /drep_info:
+  - active_epoch_no: null
+  - meta_url: https://2pzt5hfjckkkpzfl.public.blob.vercel-storage.com/drep/MESH-px7QhYRuKfJv2ZmSZWmBiw9bDhnrFC.jsonld
+  - meta_hash: 7ace63a1c447a7769c979f530c97b1bfa6e664d50b495cb6f2aff8c7a2e8696a
+- /drep_updates (due to missing active_epoch_no):
+  - block_time (of 'registered' event): 1729962572
+  - epoch_no (derived from block_time via /tx_info): 517
+---

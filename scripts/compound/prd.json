@@ -1,0 +1,83 @@
+{
+  "title": "DRep Profile Pages",
+  "description": "Add individual profile pages for each tracked DRep, accessible at /dreps/:drepId. Each profile page displays key statistics, a voting power over time chart, and a complete vote history table.",
+  "tasks": [
+    {
+      "id": 1,
+      "title": "Backend: Add voting_power_snapshots model and table migration",
+      "description": "Create a new SQLAlchemy model for the voting_power_snapshots table with columns: id (PK), drep_id (FK to dreps.drep_id), epoch (Integer), voting_power (BigInteger, lovelace), delegator_count (Integer), with a UNIQUE constraint on (drep_id, epoch). Ensure the table is created on startup.",
+      "status": "pending",
+      "dependencies": []
+    },
+    {
+      "id": 2,
+      "title": "Backend: Record snapshots in scheduler during hourly DRep info sync",
+      "description": "During the hourly update_drep_onchain_info_for_tracked() job, after fetching current DRep info from Koios, insert or update a row in voting_power_snapshots for the current epoch with the latest total_voting_power and delegator_count.",
+      "status": "pending",
+      "dependencies": [1]
+    },
+    {
+      "id": 3,
+      "title": "Backend: Add Pydantic schema for VotingPowerSnapshot",
+      "description": "Add a Pydantic response model VotingPowerSnapshot in schemas.py with fields: drep_id (str), epoch (int), voting_power (int, lovelace), delegator_count (int).",
+      "status": "pending",
+      "dependencies": [1]
+    },
+    {
+      "id": 4,
+      "title": "Backend: Add GET /api/dreps/{drep_id}/voting-power-history endpoint",
+      "description": "Create a new endpoint GET /api/dreps/{drep_id}/voting-power-history with query params limit (default 50) and offset (default 0). Returns List[VotingPowerSnapshot] ordered by epoch descending.",
+      "status": "pending",
+      "dependencies": [1, 3]
+    },
+    {
+      "id": 5,
+      "title": "Frontend: Register /dreps/:drepId route in router",
+      "description": "Add a dynamic route { path: '/dreps/:drepId', name: 'drep-profile', component: () => import('../views/DRepProfileView.vue') } to the Vue router configuration in router/index.js.",
+      "status": "pending",
+      "dependencies": []
+    },
+    {
+      "id": 6,
+      "title": "Frontend: Fix getVotesByDrep() bug in apiService.js",
+      "description": "Fix apiService.js line 30 where getVotesByDrep() references drep_id instead of the drepId parameter. Ensure the function correctly uses the passed drepId argument.",
+      "status": "pending",
+      "dependencies": []
+    },
+    {
+      "id": 7,
+      "title": "Frontend: Add getVotingPowerHistory() to apiService.js",
+      "description": "Add a new method getVotingPowerHistory(drepId, limit = 50, offset = 0) that calls GET /dreps/${drepId}/voting-power-history with limit and offset as query params.",
+      "status": "pending",
+      "dependencies": []
+    },
+    {
+      "id": 8,
+      "title": "Frontend: Wire up DRepProfileView.vue with API calls and child components",
+      "description": "Complete DRepProfileView.vue to: fetch DRep details, voting power history, and vote history in parallel on mount; display profile header with name, DRep ID (with copy button), activity status badge, registration epoch, and metadata link; render three stat cards (Total Votes, Total Delegators, Total Voting Power in ADA); integrate VotingPowerChart.vue and VoteHistoryTable.vue child components; handle edge cases (404, no votes, no history, unnamed DRep, large numbers).",
+      "status": "pending",
+      "dependencies": [5, 6, 7]
+    },
+    {
+      "id": 9,
+      "title": "Frontend: Add clickable links from DRep table rows to profile pages",
+      "description": "In DRepTable.vue, make DRep name/ID a <router-link> to /dreps/:drepId so users can navigate to the profile page from the main table. Include a back link on the profile page to return to the DReps list.",
+      "status": "pending",
+      "dependencies": [5]
+    },
+    {
+      "id": 10,
+      "title": "Testing: Backend unit tests for new endpoint and snapshot logic",
+      "description": "Write pytest tests for: the voting_power_snapshots table creation and insert/update; the GET /api/dreps/{drep_id}/voting-power-history endpoint with pagination; snapshot recording during scheduler sync.",
+      "status": "pending",
+      "dependencies": [2, 4]
+    },
+    {
+      "id": 11,
+      "title": "Testing: Frontend component tests for profile view",
+      "description": "Write frontend component tests for DRepProfileView.vue verifying: correct API calls on mount, rendering of stat cards, chart and vote history table, error/empty states, and navigation links.",
+      "status": "pending",
+      "dependencies": [8, 9]
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+fastapi
+uvicorn[standard]
+
+schedule
+# sqlite3 is part of the Python standard library, so not listed here.
+# hashlib is part of the Python standard library.
+# datetime, time, os, threading, logging are part of the Python standard library.
+panel>=1.5
+# Required for serving Panel apps via FastAPI
+bokeh-fastapi
+# Visualization utilities used in the dashboard
+hvplot
+# Compatible httpx version for Starlette's TestClient
+httpx
+python-dotenv
+sqlalchemy
+ruff
