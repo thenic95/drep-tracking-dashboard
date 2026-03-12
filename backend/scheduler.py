@@ -79,6 +79,35 @@ def job_update_drep_offchain_metadata():
     print("SCHEDULER: Job 'job_update_drep_offchain_metadata' finished.")
 
 
+def job_update_cf_delegation_amounts():
+    print("SCHEDULER: Job 'job_update_cf_delegation_amounts' is attempting to run.")
+    logger.info("SCHEDULER: Starting job_update_cf_delegation_amounts.")
+    db_conn = None
+    try:
+        db_conn = database.get_db_connection()
+        asyncio.run(data_manager.update_cf_delegation_amounts(db_conn))
+        logger.info("SCHEDULER: Finished job_update_cf_delegation_amounts.")
+    except SQLAlchemyError as db_err:
+        logger.error(
+            f"SCHEDULER: Database error in job_update_cf_delegation_amounts: {db_err}",
+            exc_info=True,
+        )
+    except httpx.RequestError as api_err:
+        logger.error(
+            f"SCHEDULER: API request error in job_update_cf_delegation_amounts: {api_err}",
+            exc_info=True,
+        )
+    except Exception as e:
+        logger.error(
+            f"SCHEDULER: Unexpected error in job_update_cf_delegation_amounts: {e}",
+            exc_info=True,
+        )
+    finally:
+        if db_conn:
+            db_conn.close()
+    print("SCHEDULER: Job 'job_update_cf_delegation_amounts' finished.")
+
+
 def job_fetch_recent_gas_and_votes():
     print("SCHEDULER: Job 'job_fetch_recent_gas_and_votes' is attempting to run.")
     logger.info("SCHEDULER: Starting job_fetch_recent_gas_and_votes.")
@@ -132,6 +161,11 @@ def run_scheduler():
         "SCHEDULER: Scheduled 'job_fetch_recent_gas_and_votes' to run every 1 minute."
     )
 
+    schedule.every(10).minutes.do(job_update_cf_delegation_amounts)
+    logger.info(
+        "SCHEDULER: Scheduled 'job_update_cf_delegation_amounts' to run every 10 minutes."
+    )
+
     logger.info(
         "SCHEDULER: Scheduler configured. Performing initial run of jobs upon startup..."
     )
@@ -140,6 +174,7 @@ def run_scheduler():
         job_update_drep_onchain_info()
         job_update_drep_offchain_metadata()
         job_fetch_recent_gas_and_votes()
+        job_update_cf_delegation_amounts()
         logger.info("SCHEDULER: Initial run of scheduled jobs complete.")
         print("SCHEDULER: Initial run of scheduled jobs complete.")
     except Exception as e:

@@ -2,16 +2,22 @@
 
 ## Overview
 
-The Cardano DRep Tracking Dashboard is a web application designed to transparently display key information and voting behavior of selected Cardano Delegated Representatives (DReps). This Minimum Viable Product (MVP) is intended for local execution and provides insights into DRep activities and governance participation.
+The Cardano DRep Tracking Dashboard is a web application designed to transparently display key information and voting behavior of selected Cardano Delegated Representatives (DReps). It provides insights into DRep activities, governance participation, and Cardano Foundation delegation monitoring.
 
-## Features (MVP)
+## Features
 
-*   **DRep Profile & Status Overview:** Displays DRep ID, Name (when available from metadata), registration epoch and date, current voting power, number of delegators, and activity status (Active, Inactive, Expired).
-*   **Governance Action (GA) Vote Tracking:** Lists governance actions with details (title, type, submission/expiration epochs). For tracked DReps, it shows their vote on each GA (Yes, No, Abstain, Did Not Vote) with visual cues. Handles cases where a DRep might not have been registered at the time of a GA.
+*   **DRep Profile & Status Overview:** Displays DRep ID, Name (when available from metadata), registration epoch and date, current voting power, number of delegators, activity status (Active, Inactive, Expired), and expiration epoch.
+*   **Governance Action (GA) Vote Tracking:** Lists governance actions with details (title, type, submission/expiration epochs). For tracked DReps, it shows their vote on each GA (Yes, No, Abstain, Did Not Vote) with visual cues. Uses a dedicated vote-matrix endpoint that efficiently fetches only tracked DReps' votes per GA.
+*   **CF Delegation Dashboard:** Monitors Cardano Foundation-delegated DReps with computed metrics including tenure, CF impact ratio, participation rate, rationale rate, and alignment scoring. Flags "at risk" DReps based on configurable thresholds. Includes:
+    *   Sortable table with inline alignment score editing (1-5)
+    *   Tabbed view: "All CF Delegations" and "Reallocation Candidates" (at-risk only)
+    *   Configurable threshold settings via modal UI
+    *   Manual override for delegation epoch and CF delegation amounts
 *   **Simplified DRep List Management:** Users can add or remove DRep IDs from a tracked list via the API, and the dashboard will dynamically update to reflect these changes.
-*   **Column Filtering:** The DRep table now includes filter inputs for each column, allowing quick searching and narrowing of results.
+*   **Column Filtering:** The DRep table includes filter inputs for each column, allowing quick searching and narrowing of results.
 *   **Data Sourced from Koios API:** All on-chain DRep and governance data is fetched from the Koios API.
-*   **Automatic Data Updates:** A backend scheduler periodically fetches the latest on-chain data to keep the dashboard updated. This includes DRep on-chain status, off-chain metadata verification, and new governance actions/votes.
+*   **Automatic Data Updates:** A backend scheduler periodically fetches the latest on-chain data to keep the dashboard updated. This includes DRep on-chain status, off-chain metadata verification, governance actions/votes, and CF delegation amounts.
+*   **Automatic Schema Migrations:** New database columns are added automatically on startup, so existing databases are upgraded without manual intervention.
 
 ## Tech Stack
 
@@ -19,13 +25,13 @@ The Cardano DRep Tracking Dashboard is a web application designed to transparent
     *   Python 3.10+
     *   FastAPI (for the REST API)
     *   Uvicorn (ASGI server)
-    *   SQLite (for local data storage)
-    *   `requests` (for Koios API communication)
+    *   SQLAlchemy (ORM) + SQLite (for local data storage)
+    *   `httpx` (for async Koios API communication)
     *   `schedule` (for background data update tasks)
 *   **Frontend:**
     *   Vue.js 3 (with Vite)
     *   `axios` (for API communication with the backend)
-    *   HTML, CSS, JavaScript
+    *   Tailwind CSS
 *   **Data Source:**
     *   [Koios API](https://api.koios.rest/)
 
@@ -35,13 +41,15 @@ The Cardano DRep Tracking Dashboard is a web application designed to transparent
 .
 ├── backend/
 │   ├── __init__.py
-│   ├── config.py           # Configuration (API keys, DRep list, DB path)
+│   ├── cf_delegation.py    # CF delegation metrics computation
+│   ├── config.py           # Configuration (API keys, DRep list, DB path, CF stake addresses)
 │   ├── data_manager.py     # Core logic for fetching & processing data
-│   ├── database.py         # Database interaction functions
+│   ├── database.py         # Database interaction functions + schema migrations
 │   ├── database_setup.py   # Script to initialize DB schema
 │   ├── drep_tracker.db     # SQLite database file (created on run)
 │   ├── koios_api.py        # Koios API client functions
 │   ├── main.py             # FastAPI application
+│   ├── models.py           # SQLAlchemy ORM models
 │   ├── requirements.txt    # Backend Python dependencies
 │   ├── scheduler.py        # Background task scheduler
 │   └── schemas.py          # Pydantic schemas for API
@@ -50,9 +58,20 @@ The Cardano DRep Tracking Dashboard is a web application designed to transparent
 │       ├── public/
 │       ├── src/
 │       │   ├── assets/         # CSS, images
-│       │   ├── components/     # Vue components (DRepTable, GovernanceActionMatrix, etc.)
+│       │   ├── components/     # Vue components
+│       │   │   ├── CFDelegationTable.vue
+│       │   │   ├── DRepManagement.vue
+│       │   │   ├── DRepTable.vue
+│       │   │   ├── GovernanceActionMatrix.vue
+│       │   │   ├── ThresholdSettingsModal.vue
+│       │   │   └── layout/
 │       │   ├── services/       # apiService.js
-│       │   ├── views/          # Vue views (DashboardView)
+│       │   ├── views/
+│       │   │   ├── CFDelegationView.vue
+│       │   │   ├── DashboardView.vue
+│       │   │   ├── GovernanceView.vue
+│       │   │   └── ...
+│       │   ├── router/         # Vue Router configuration
 │       │   ├── App.vue         # Main Vue application component
 │       │   └── main.js         # Vue app initialization
 │       ├── index.html
@@ -133,7 +152,7 @@ a.  **Create and Activate Virtual Environment:**
     Activate the virtual environment:
     *   Windows: `venv\Scripts\activate`
     *   macOS/Linux: `source venv/bin/activate`
-    
+
     Return to the project root directory:
     ```bash
     cd ..
@@ -152,20 +171,22 @@ c.  **Database Initialization & Initial Data Load (Recommended First Step):**
     ```bash
     # Ensure your backend virtual environment is activated (see step 2a)
     # From the project root directory:
-    python -m backend.main_data_loader 
+    python -m backend.main_data_loader
     ```
     This script populates the database with initial DReps (from `config.py`), fetches details for governance actions, and retrieves votes for all available proposals (unless configured otherwise in `backend/config.py`). After this, the backend server can be started.
+
+    **Note:** If upgrading from an older version, schema migrations run automatically on startup to add new columns (e.g., `expires_epoch_no`, CF delegation fields, vote rationale fields). No manual migration is needed.
 
 ### 3. Frontend Setup
 
 Navigate to the frontend directory and install npm packages.
 ```bash
-cd frontend/frontend-app 
+cd frontend/frontend-app
 npm install
 ```
 Return to the project root directory if you wish, or keep this terminal for running the frontend server.
 ```bash
-cd ../.. 
+cd ../..
 ```
 
 ## Running the Application
@@ -188,7 +209,7 @@ You will typically have two terminals running concurrently: one for the backend 
 
 2.  **Start the Frontend Development Server:**
     *   Open another terminal in the project root directory.
-    *   Navigate to the frontend application directory: 
+    *   Navigate to the frontend application directory:
         ```bash
         cd frontend/frontend-app
         ```
@@ -212,16 +233,64 @@ The application uses a Koios API token.
         (Or manually create `.env` and add `KOIOS_API_TOKEN=your_token_here`)
     *   Paste your API token into the `.env` file.
 
+## CF Delegation Dashboard Setup
+
+The CF Delegation Dashboard monitors DReps that receive delegation from the Cardano Foundation.
+
+1.  **Configure CF Stake Addresses:** Add the CF stake address(es) to `backend/config.py`:
+    ```python
+    CF_STAKE_ADDRESSES = ["stake1uxxxx..."]  # Replace with actual CF stake addresses
+    ```
+
+2.  **Set Delegation Data:** For DReps already delegated by CF, set their delegation epoch via the API:
+    ```bash
+    curl -X PUT http://localhost:8000/api/cf-delegation/dreps/{drep_id}/delegation \
+      -H "Content-Type: application/json" \
+      -d '{"delegation_epoch": 500, "cf_delegated_ada": 5000000}'
+    ```
+
+3.  **Access the Dashboard:** Navigate to `http://localhost:5173/cf-delegation` in the frontend.
+
+4.  **Configure Thresholds:** Click the "Thresholds" button to adjust risk assessment parameters:
+    *   **Tenure (days):** Days since CF delegation (default: 180)
+    *   **CF Impact Ratio (%):** CF's share of total voting power (default: 15%)
+    *   **Participation Rate (%):** Minimum expected vote participation (default: 70%)
+    *   **Rationale Rate (%):** Minimum expected votes with rationale (default: 50%)
+    *   **Alignment Score (1-5):** Maximum alignment score to trigger risk (default: 3)
+    *   **Min Risk Factors:** Minimum risk factors needed alongside low alignment (default: 2)
+
+## API Endpoints
+
+### DReps
+*   `GET /api/dreps/tracked` - List tracked DReps with full details
+*   `GET /api/dreps/{drep_id}` - Get a specific DRep
+*   `POST /api/dreps/tracked/{drep_id}` - Add DRep to tracking
+*   `DELETE /api/dreps/tracked/{drep_id}` - Remove DRep from tracking
+*   `GET /api/dreps/{drep_id}/votes` - Get votes cast by a DRep
+*   `GET /api/dreps/{drep_id}/voting-power-history` - Get voting power snapshots
+
+### Governance Actions
+*   `GET /api/governance-actions` - List governance actions (supports `limit`, `offset`)
+*   `GET /api/governance-actions/{ga_id}/votes` - Get votes for a specific GA
+*   `GET /api/governance-actions/vote-matrix` - Get GAs with votes pre-filtered to tracked DReps (supports `ga_limit`, `ga_offset`)
+
+### CF Delegation
+*   `GET /api/cf-delegation/dreps` - List CF-delegated DReps with computed metrics
+*   `PUT /api/cf-delegation/dreps/{drep_id}/alignment-score` - Update alignment score
+*   `PUT /api/cf-delegation/dreps/{drep_id}/delegation` - Manual override for delegation epoch/amount
+*   `GET /api/cf-delegation/thresholds` - Get current threshold settings
+*   `PUT /api/cf-delegation/thresholds` - Update threshold settings
+
 ## Data Updates
 
 The backend includes an automated scheduler that periodically performs the following tasks:
-*   **DRep On-Chain Info Update:** (e.g., voting power, delegator count, activity status) - Default: Every 1 hour.
+*   **DRep On-Chain Info Update:** (e.g., voting power, delegator count, activity status, expiration epoch) - Default: Every 1 hour.
 *   **DRep Off-Chain Metadata Update:** (e.g., fetches DRep metadata from their `metadata_url` and verifies hash) - Default: Every 6 hours.
-*   **Recent Governance Actions & Votes Update:** Fetches new governance actions and updates votes for recent/active ones - Default: Every 2 hours.
+*   **Recent Governance Actions & Votes Update:** Fetches new governance actions and updates votes for recent/active ones. Now also captures `voted_epoch`, vote rationale URLs, and rationale presence. - Default: Every 2 hours.
+*   **CF Delegation Amount Update:** For each tracked DRep, checks if CF stake addresses are among their delegators and updates CF delegation amounts. - Runs alongside the DRep info update.
 
 These schedules are defined in `backend/scheduler.py` and can be adjusted. The scheduler starts automatically when the backend FastAPI application starts. Jobs are also run once on startup for immediate data availability.
 
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-

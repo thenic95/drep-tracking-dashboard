@@ -43,6 +43,29 @@ KOIOS_API_CALL_DELAY_SECONDS = (
     0.2  # Delay between individual Koios API calls within loops to respect rate limits
 )
 
+# CF (Cardano Foundation) stake addresses for delegation tracking.
+# Add CF stake credentials/addresses here to enable CF delegation monitoring.
+CF_STAKE_ADDRESSES: list[str] = [
+    "stake1u99w898wvj7qep8zx3gex33zx0rsknefdfwj6mmnwzw48dslk64yh",
+    "stake1u8m40a3e59jp452zdz07mjzmu90eqvff9xj9ydqx7fxla2q87uq34",
+    "stake1uynh8xncj7kw4a9taaykxy75mjkjw3pgpvyzyt9pwyslktcxm5xd5",
+    "stake1uxd9q7efgpr52cq5d7pda9dajftglx0s2s3532uapvum5dc3mcrs2",
+    "stake1uyv8t8l39dmyznv8cqgmqklmtnkvxktd2c4l26al6j85y7q8wk0ra",
+    "stake1u8uee2s3y3svc8237nm0mpcsd0qw2pvzu0hn8kal32jrlxg04r3wf",
+    "stake1u9u2zwvxp79j7gg38mqlv2km52h77rsqxun5f6lr4m2j7dsraacmr",
+    "stake1u9al6v4vdukkaukt8zl7jq3z7jmarlsfel6rse6n5khg96srwa5ac",
+    "stake1uxwcg93y4kjumxupyzpechxx2239ctzyg35xga84tgtrqwgxmgsn9",
+    "stake1uxdmpfm2s06k097lmsv8wc00gz073crwhrpa6a3dv2p2gqcqla5lq",
+    "stake1u9uq8gqap39g4pepvpqq7497dlwsk3ka7kc4x6rgdguxs5su6h9ms",
+    "stake1ux6x6qpuugradesquz4s022cdj7r3cu2pjsxnxv37fe20sqy89l4w",
+    "stake1u8x2luu4ke99tx4rnhwhm69zmkkrpsmylgcr7f4xad8hsqgssp4mt",
+    "stake1uypx7jdzh4yqw04axshzgk5lwxkq8wd0r6wx4rz2zs6377smlshv7",
+    "stake1uxv8rj3l09ks9ha7zf55e65sduqelak5sgpt56va8l4zz2cv3mqqr",
+    "stake1uxz9szw7xl7rnaxn66x8r8cfnetfg0mx60z4pfd70vwk65gw6madt",
+    "stake1u99rxmppp5kmurxzzmzwvydupwh6c590w57m403y292a06qxwuyra",
+    "stake1uyx6hgdkqvg0tps20z7mh2utvngvharv39p5elyrglkth6gltznm3",
+]
+
 # Define the path for the database file relative to the backend directory
 # BACKEND_DIR is already defined at the top
 DB_PATH = os.path.join(BACKEND_DIR, DB_FILE)

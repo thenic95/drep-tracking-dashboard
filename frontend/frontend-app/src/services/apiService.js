@@ -32,8 +32,27 @@ export default {
   getVotingPowerHistory(drepId, limit = 50, offset = 0) {
     return apiClient.get(`/dreps/${drepId}/voting-power-history`, { params: { limit, offset } });
   },
-  // Example of a root/health check if your backend has one at /api/
-  // getBackendStatus() {
-  //   return apiClient.get('/');
-  // }
+  // Vote matrix - returns GAs with votes pre-filtered to tracked DReps
+  getVoteMatrix(gaLimit = 20, gaOffset = 0) {
+    return apiClient.get('/governance-actions/vote-matrix', { params: { ga_limit: gaLimit, ga_offset: gaOffset } });
+  },
+  // CF Delegation endpoints
+  getCFDelegationDreps() {
+    return apiClient.get('/cf-delegation/dreps');
+  },
+  updateDelegationDate(drepId, delegationDate) {
+    return apiClient.put(`/cf-delegation/dreps/${drepId}/delegation-date`, { delegation_date: delegationDate });
+  },
+  updateAlignmentScore(drepId, score) {
+    return apiClient.put(`/cf-delegation/dreps/${drepId}/alignment-score`, { score });
+  },
+  updateCFDelegation(drepId, data) {
+    return apiClient.put(`/cf-delegation/dreps/${drepId}/delegation`, data);
+  },
+  getCFThresholds() {
+    return apiClient.get('/cf-delegation/thresholds');
+  },
+  updateCFThresholds(thresholds) {
+    return apiClient.put('/cf-delegation/thresholds', thresholds);
+  },
 };

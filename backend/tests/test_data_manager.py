@@ -195,6 +195,7 @@ class TestDRepProcessingHelpers(unittest.TestCase):
             "last_koios_update_epoch": 8,
             "activity_status": "Active",  # Determined by _determine_activity_status
             "registration_epoch": 5,
+            "expires_epoch_no": 10,
         }
         result = data_manager._assemble_base_drep_data_from_koios(
             "drep1test", koios_data, current_epoch
@@ -217,6 +218,7 @@ class TestDRepProcessingHelpers(unittest.TestCase):
             "last_koios_update_epoch": 8,
             "activity_status": "Inactive (Expired)",
             "registration_epoch": None,
+            "expires_epoch_no": 7,
         }
         result_inactive = data_manager._assemble_base_drep_data_from_koios(
             "drep1test2", koios_data_inactive_expired, current_epoch
@@ -604,6 +606,8 @@ class TestGovernanceProcessingHelpers(unittest.TestCase):
             "ga_id": ga_id,
             "vote": "Yes",
             "voted_epoch": None,
+            "has_rationale": 0,
+            "vote_anchor_url": None,
         }
         mock_db_add_vote.assert_called_once_with(mock_conn, expected_vote_data)
         mock_ensure_drep.reset_mock()
@@ -611,7 +615,7 @@ class TestGovernanceProcessingHelpers(unittest.TestCase):
 
         # DB error on add_drep_vote
         mock_ensure_drep.return_value = True
-        mock_db_add_vote.side_effect = data_manager.sqlite3.Error(
+        mock_db_add_vote.side_effect = data_manager.SQLAlchemyError(
             "DB error on vote add"
         )
         with patch.object(data_manager.logger, "error") as mock_log_error:

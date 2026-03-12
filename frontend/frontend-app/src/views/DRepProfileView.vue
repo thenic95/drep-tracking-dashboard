@@ -10,15 +10,15 @@
       <!-- Profile Header -->
       <div class="bg-white rounded-lg shadow p-6 mb-6">
         <div class="flex items-start justify-between flex-wrap gap-4">
-          <div>
-            <h1 class="text-2xl font-bold text-gray-800">{{ drep.name || 'Unnamed DRep' }}</h1>
-            <div class="flex items-center gap-2 mt-2">
-              <span class="font-mono text-sm text-gray-500" :title="drep.drep_id">
-                {{ drep.drep_id.substring(0, 24) }}...
+          <div class="min-w-0">
+            <h1 class="text-2xl font-bold text-gray-800">{{ (drep.name && drep.name !== 'Name N/A') ? drep.name : 'Unnamed DRep' }}</h1>
+            <div class="flex items-start gap-2 mt-2 min-w-0">
+              <span class="font-mono text-sm text-gray-500 break-all min-w-0">
+                {{ drep.drep_id }}
               </span>
               <button
                 @click="copyDrepId"
-                class="text-blue-500 hover:text-blue-700 text-xs border border-blue-300 rounded px-2 py-0.5"
+                class="text-blue-500 hover:text-blue-700 text-xs border border-blue-300 rounded px-2 py-0.5 shrink-0 mt-0.5"
               >
                 {{ copied ? 'Copied!' : 'Copy' }}
               </button>
@@ -160,12 +160,23 @@ export default {
       }
     },
     async copyDrepId() {
+      const text = this.drep.drep_id
       try {
-        await navigator.clipboard.writeText(this.drep.drep_id)
+        await navigator.clipboard.writeText(text)
         this.copied = true
         setTimeout(() => { this.copied = false }, 2000)
       } catch {
-        // Fallback: do nothing
+        // Fallback for non-HTTPS contexts
+        const ta = document.createElement('textarea')
+        ta.value = text
+        ta.style.position = 'fixed'
+        ta.style.opacity = '0'
+        document.body.appendChild(ta)
+        ta.select()
+        document.execCommand('copy')
+        document.body.removeChild(ta)
+        this.copied = true
+        setTimeout(() => { this.copied = false }, 2000)
       }
     }
   }

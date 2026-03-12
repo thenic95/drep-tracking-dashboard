@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -15,8 +15,14 @@ class DRepBase(BaseModel):
     total_voting_power: Optional[int] = Field(default=0)
     delegator_count: Optional[int] = Field(default=0)
     activity_status: Optional[str] = Field(default="Unknown")
+    expires_epoch_no: Optional[int] = None
     last_koios_update_epoch: Optional[int] = None
     last_metadata_check_date: Optional[str] = None  # ISO 8601 date string
+    # CF Delegation fields
+    cf_delegated_ada: Optional[int] = None
+    delegation_epoch: Optional[int] = None
+    delegation_date: Optional[str] = None  # User-set ISO date string (YYYY-MM-DD)
+    alignment_score: Optional[int] = None
 
 
 class DRepCreate(DRepBase):
@@ -59,7 +65,8 @@ class DRepVoteBase(BaseModel):
     ga_id: str
     vote: str  # e.g., "Yes", "No", "Abstain"
     voted_epoch: Optional[int] = None
-    # vote_id is auto-incrementing in DB, usually not needed in create, but present in response
+    has_rationale: Optional[int] = Field(default=0)
+    vote_anchor_url: Optional[str] = None
 
 
 class DRepVoteCreate(DRepVoteBase):
@@ -92,20 +99,63 @@ class VotingPowerSnapshot(BaseModel):
         from_attributes = True
 
 
-# --- Combined Response Models (Examples) ---
+# --- Combined Response Models ---
 class DRepWithVotes(DRep):
     votes: List[DRepVote] = []
 
 
 class GovernanceActionWithVotes(GovernanceAction):
-    votes_summary: Optional[dict] = None  # e.g., {"yes": 10, "no": 5, "abstain": 2}
-    drep_votes: List[DRepVote] = []  # Detailed votes by DReps
+    votes_summary: Optional[dict] = None
+    drep_votes: List[DRepVote] = []
 
 
-# For API responses where we might just list DRep IDs for a GA
 class GovernanceActionVoter(BaseModel):
     drep_id: str
     vote: str
 
     class Config:
         from_attributes = True
+
+
+# --- Vote Matrix Schemas ---
+class VoteMatrixGA(GovernanceAction):
+    drep_votes: Dict[str, str] = {}  # drep_id -> vote value
+
+
+class VoteMatrixResponse(BaseModel):
+    governance_actions: List[VoteMatrixGA] = []
+    total_count: int = 0
+
+
+# --- CF Delegation Schemas ---
+class CFDelegationDRepResponse(DRep):
+    tenure_days: Optional[int] = None
+    cf_impact_ratio: Optional[float] = None
+    participation_rate: Optional[float] = None
+    rationale_rate: Optional[float] = None
+    is_at_risk: bool = False
+    failed_gate: Optional[str] = None
+    votes_cast: Optional[int] = None
+    total_gas: Optional[int] = None
+
+
+class DelegationDateUpdate(BaseModel):
+    delegation_date: Optional[str] = None  # ISO date string YYYY-MM-DD, or null to clear
+
+
+class CFThresholdSettings(BaseModel):
+    mature_cohort_days: int = 180
+    exception_tenure_days: int = 60
+    exception_participation_pct: float = 40.0
+    part_lower_bound_pct: float = 50.0
+    part_upper_bound_pct: float = 67.0
+    impact_minimum_pct: float = 30.0
+
+
+class AlignmentScoreUpdate(BaseModel):
+    score: int = Field(..., ge=1, le=5)
+
+
+class CFDelegationUpdate(BaseModel):
+    delegation_epoch: int
+    cf_delegated_ada: Optional[int] = None

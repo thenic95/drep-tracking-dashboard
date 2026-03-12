@@ -208,7 +208,8 @@ export default {
       if (drep.drep_id === 'drep1yv4uesaj92wk8ljlsh4p7jzndnzrflchaz5fzug3zxg4naqkpeas3') {
         return 'MESH';
       }
-      return drep.name || 'N/A';
+      const name = drep.name;
+      return (name && name !== 'Name N/A') ? name : 'N/A';
     },
     getStatusClass(status) {
       switch (status) {

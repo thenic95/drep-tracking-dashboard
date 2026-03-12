@@ -1,6 +1,7 @@
 from sqlalchemy import (
     BigInteger,
     Column,
+    Float,
     ForeignKey,
     Integer,
     String,
@@ -26,8 +27,18 @@ class DRep(Base):
     total_voting_power = Column(BigInteger, default=0)
     delegator_count = Column(Integer, default=0)
     activity_status = Column(String, default="Unknown")
+    expires_epoch_no = Column(Integer, nullable=True)
     last_koios_update_epoch = Column(Integer)
     last_metadata_check_date = Column(String)
+    # CF Delegation fields
+    cf_delegated_ada = Column(BigInteger, nullable=True)
+    delegation_epoch = Column(Integer, nullable=True)
+    delegation_date = Column(String, nullable=True)  # User-set ISO date string (YYYY-MM-DD)
+    alignment_score = Column(Integer, nullable=True)
+    # Cached computed metrics (survive restarts)
+    cached_participation_rate = Column(Float, nullable=True)
+    cached_rationale_rate = Column(Float, nullable=True)
+    cached_cf_impact_ratio = Column(Float, nullable=True)
 
     # Relationships
     votes = relationship("Vote", back_populates="drep")
@@ -84,6 +95,8 @@ class Vote(Base):
     ga_id = Column(String, ForeignKey("governance_actions.ga_id"), nullable=False)
     vote = Column(String)
     voted_epoch = Column(Integer)
+    has_rationale = Column(Integer, default=0)
+    vote_anchor_url = Column(String, nullable=True)
 
     __table_args__ = (UniqueConstraint("drep_id", "ga_id", name="_drep_ga_uc"),)
 
@@ -107,3 +120,11 @@ class VotingPowerSnapshot(Base):
 
     # Relationships
     drep = relationship("DRep", back_populates="voting_power_snapshots")
+
+
+class CFDelegationThreshold(Base):
+    __tablename__ = "cf_delegation_thresholds"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    key = Column(String, unique=True, nullable=False)
+    value = Column(String, nullable=False)

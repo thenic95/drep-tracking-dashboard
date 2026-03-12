@@ -76,6 +76,7 @@ const navLinks = [
   { name: 'DRep Profiles', path: '/dreps' },
   { name: 'Manage DReps', path: '/manage' },
   { name: 'Governance', path: '/governance' },
+  { name: 'CF Delegation', path: '/cf-delegation' },
 ]
 
 const isActive = (path) => {

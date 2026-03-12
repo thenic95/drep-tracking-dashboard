@@ -1,7 +1,8 @@
 import logging
 import os
+import sqlite3 as stdlib_sqlite3
 
-from sqlalchemy import create_engine, func, select
+from sqlalchemy import create_engine, func, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from . import config, models
@@ -39,6 +40,32 @@ def create_tables_if_not_exist():
     """Creates database tables using SQLAlchemy models."""
     models.Base.metadata.create_all(bind=engine)
     logger.info("Database tables verified/created using SQLAlchemy.")
+    run_schema_migrations()
+
+
+def run_schema_migrations():
+    """Adds new columns to existing tables if they don't exist yet."""
+    migrations = [
+        ("dreps", "expires_epoch_no", "INTEGER"),
+        ("dreps", "cf_delegated_ada", "BIGINT"),
+        ("dreps", "delegation_epoch", "INTEGER"),
+        ("dreps", "alignment_score", "INTEGER"),
+        ("dreps", "delegation_date", "TEXT"),
+        ("drep_votes", "has_rationale", "INTEGER DEFAULT 0"),
+        ("drep_votes", "vote_anchor_url", "TEXT"),
+        ("dreps", "cached_participation_rate", "REAL"),
+        ("dreps", "cached_rationale_rate", "REAL"),
+        ("dreps", "cached_cf_impact_ratio", "REAL"),
+    ]
+    with engine.connect() as conn:
+        for table, column, col_type in migrations:
+            try:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}"))
+                conn.commit()
+                logger.info(f"Migration: added column {column} to {table}.")
+            except Exception:
+                conn.rollback()
+                # Column likely already exists
 
 
 # --- DRep Table Operations ---
@@ -160,11 +187,10 @@ def get_all_ga_ids(db: Session) -> list[str]:
 
 # --- DRep Votes Table Operations ---
 def add_drep_vote(db: Session, vote_data: dict):
-    """Inserts a DRep vote if it doesn't exist."""
+    """Inserts or updates a DRep vote, keeping rationale/anchor data current."""
     try:
         drep_id = vote_data.get("drep_id")
         ga_id = vote_data.get("ga_id")
-        # Check existing using UniqueConstraint logic (manually checked here to avoid simple IntegrityError spam)
         existing_vote = db.scalar(
             select(models.Vote).where(
                 models.Vote.drep_id == drep_id, models.Vote.ga_id == ga_id
@@ -175,6 +201,17 @@ def add_drep_vote(db: Session, vote_data: dict):
             db.add(new_vote)
             db.commit()
             logger.debug(f"Vote by DRep {drep_id} on GA {ga_id} added.")
+        else:
+            # Update fields that may have changed (vote change or rationale added later)
+            changed = False
+            for field in ("vote", "voted_epoch", "has_rationale", "vote_anchor_url"):
+                new_val = vote_data.get(field)
+                if new_val is not None and getattr(existing_vote, field) != new_val:
+                    setattr(existing_vote, field, new_val)
+                    changed = True
+            if changed:
+                db.commit()
+                logger.debug(f"Vote by DRep {drep_id} on GA {ga_id} updated.")
     except Exception as e:
         logger.error(
             f"Error adding DRep vote for DRep {vote_data.get('drep_id')} on GA {vote_data.get('ga_id')}: {e}"
@@ -358,6 +395,167 @@ def get_vote_count_for_ga(db: Session, ga_id: str) -> int:
         select(func.count()).select_from(models.Vote).where(models.Vote.ga_id == ga_id)
     )
     return count if count else 0
+
+
+# --- Vote Matrix Operations ---
+def get_votes_for_ga_by_dreps(
+    db: Session, ga_id: str, drep_ids: list[str]
+) -> list[dict]:
+    """Retrieves votes for a GA filtered to specific DRep IDs."""
+    if not drep_ids:
+        return []
+    query = (
+        select(models.Vote)
+        .where(models.Vote.ga_id == ga_id, models.Vote.drep_id.in_(drep_ids))
+    )
+    votes = db.scalars(query).all()
+    columns = models.Vote.__table__.columns
+    return [{c.name: getattr(v, c.name) for c in columns} for v in votes]
+
+
+# --- CF Delegation Operations ---
+def get_cf_delegated_dreps(db: Session) -> list[dict]:
+    """Retrieves all tracked DReps (same source of truth as DRepManagement)."""
+    query = (
+        select(models.DRep)
+        .join(models.TrackedDRep, models.DRep.drep_id == models.TrackedDRep.drep_id)
+        .order_by(models.DRep.drep_id)
+    )
+    dreps = db.scalars(query).all()
+    return [
+        {c.name: getattr(d, c.name) for c in models.DRep.__table__.columns}
+        for d in dreps
+    ]
+
+
+def count_gas_since_epoch(db: Session, epoch: int) -> int:
+    """Counts governance actions submitted since a given epoch."""
+    count = db.scalar(
+        select(func.count())
+        .select_from(models.GovernanceAction)
+        .where(models.GovernanceAction.submission_epoch >= epoch)
+    )
+    return count if count else 0
+
+
+def count_drep_votes_since_epoch(db: Session, drep_id: str, epoch: int) -> int:
+    """Counts votes cast by a DRep on governance actions submitted since a given epoch."""
+    count = db.scalar(
+        select(func.count())
+        .select_from(models.Vote)
+        .join(models.GovernanceAction, models.Vote.ga_id == models.GovernanceAction.ga_id)
+        .where(
+            models.Vote.drep_id == drep_id,
+            models.GovernanceAction.submission_epoch >= epoch,
+        )
+    )
+    return count if count else 0
+
+
+def count_drep_votes_with_rationale(db: Session, drep_id: str, epoch: int) -> int:
+    """Counts votes with rationale by a DRep on governance actions submitted since a given epoch."""
+    count = db.scalar(
+        select(func.count())
+        .select_from(models.Vote)
+        .join(models.GovernanceAction, models.Vote.ga_id == models.GovernanceAction.ga_id)
+        .where(
+            models.Vote.drep_id == drep_id,
+            models.GovernanceAction.submission_epoch >= epoch,
+            models.Vote.has_rationale == 1,
+        )
+    )
+    return count if count else 0
+
+
+def update_drep_cached_metrics(db: Session, drep_id: str, metrics: dict):
+    """Updates cached computed metrics for a DRep."""
+    try:
+        drep = db.scalar(select(models.DRep).where(models.DRep.drep_id == drep_id))
+        if drep:
+            for key in ("cached_participation_rate", "cached_rationale_rate", "cached_cf_impact_ratio"):
+                if key in metrics:
+                    setattr(drep, key, metrics[key])
+            db.commit()
+    except Exception as e:
+        logger.error(f"Error updating cached metrics for DRep {drep_id}: {e}")
+        db.rollback()
+
+
+def get_earliest_vote_epoch(db: Session, drep_id: str) -> int | None:
+    """Returns the earliest voted_epoch for a DRep from the drep_votes table."""
+    result = db.scalar(
+        select(func.min(models.Vote.voted_epoch)).where(
+            models.Vote.drep_id == drep_id
+        )
+    )
+    return result
+
+
+def update_drep_alignment_score(db: Session, drep_id: str, score: int):
+    """Updates the alignment score for a DRep."""
+    try:
+        drep = db.scalar(select(models.DRep).where(models.DRep.drep_id == drep_id))
+        if drep:
+            drep.alignment_score = score
+            db.commit()
+    except Exception as e:
+        logger.error(f"Error updating alignment score for DRep {drep_id}: {e}")
+        db.rollback()
+
+
+def update_drep_cf_delegation(
+    db: Session, drep_id: str, cf_delegated_ada: int | None, delegation_epoch: int
+):
+    """Updates CF delegation data for a DRep."""
+    try:
+        drep = db.scalar(select(models.DRep).where(models.DRep.drep_id == drep_id))
+        if drep:
+            drep.cf_delegated_ada = cf_delegated_ada
+            drep.delegation_epoch = delegation_epoch
+            db.commit()
+    except Exception as e:
+        logger.error(f"Error updating CF delegation for DRep {drep_id}: {e}")
+        db.rollback()
+
+
+def update_drep_delegation_date(db: Session, drep_id: str, delegation_date: str | None):
+    """Updates the user-set delegation date for a DRep."""
+    try:
+        drep = db.scalar(select(models.DRep).where(models.DRep.drep_id == drep_id))
+        if drep:
+            drep.delegation_date = delegation_date
+            db.commit()
+    except Exception as e:
+        logger.error(f"Error updating delegation_date for DRep {drep_id}: {e}")
+        db.rollback()
+
+
+def get_cf_thresholds(db: Session) -> dict:
+    """Retrieves CF delegation thresholds from DB."""
+    result = {}
+    rows = db.scalars(select(models.CFDelegationThreshold)).all()
+    for row in rows:
+        result[row.key] = row.value
+    return result
+
+
+def set_cf_threshold(db: Session, key: str, value: str):
+    """Sets a CF delegation threshold value."""
+    try:
+        existing = db.scalar(
+            select(models.CFDelegationThreshold).where(
+                models.CFDelegationThreshold.key == key
+            )
+        )
+        if existing:
+            existing.value = value
+        else:
+            new_threshold = models.CFDelegationThreshold(key=key, value=value)
+            db.add(new_threshold)
+        db.commit()
+    except Exception as e:
+        logger.error(f"Error setting CF threshold {key}: {e}")
+        db.rollback()
 
 
 if __name__ == "__main__":

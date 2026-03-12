@@ -30,6 +30,12 @@ const routes = [
     name: 'Governance',
     component: () => import('@/views/GovernanceView.vue'),
     meta: { title: 'Governance Actions' }
+  },
+  {
+    path: '/cf-delegation',
+    name: 'CFDelegation',
+    component: () => import('@/views/CFDelegationView.vue'),
+    meta: { title: 'CF Delegation' }
   }
 ]
 

@@ -41,7 +41,7 @@
         </tr>
       </thead>
       <tbody class="divide-y divide-gray-100">
-        <tr v-for="ga in processedGAs" :key="ga.ga_id" class="hover:bg-gray-50 transition-colors">
+        <tr v-for="ga in governanceActions" :key="ga.ga_id" class="hover:bg-gray-50 transition-colors">
           <td class="px-4 py-3 text-sm text-gray-800" :title="ga.ga_id">
             <div class="font-medium">{{ ga.title || ga.ga_id.substring(0,15) + "..." }}</div>
             <span class="text-xs px-2 py-0.5 bg-purple-100 text-purple-700 rounded mt-1 inline-block">
@@ -73,8 +73,6 @@
 </template>
 
 <script>
-import apiService from '../services/apiService';
-
 const GA_DREP_VOTE_NOT_POSSIBLE = [
   'gov_action1286ft23r7jem825s4l0y5rn8sgam0tz2ce04l7a38qmnhp3l9a6qqn850dw',
   'gov_action1k2jertppnnndejjcglszfqq4yzw8evzrd2nt66rr6rqlz54xp0zsq05ecsn',
@@ -93,65 +91,17 @@ export default {
       type: Array,
       required: true,
       default: () => []
-    }
-  },
-  data() {
-    return {
-      votesByGA: {},
-      loading: false,
-      error: null,
-      processedGAs: []
-    };
-  },
-  watch: {
-    governanceActions: {
-      immediate: true,
-      handler(newGAs) {
-        if (newGAs && newGAs.length > 0) {
-          this.processGovernanceActions(newGAs);
-        } else {
-          this.processedGAs = [];
-        }
-      }
+    },
+    loading: {
+      type: Boolean,
+      default: false
+    },
+    error: {
+      type: String,
+      default: null
     }
   },
   methods: {
-    async processGovernanceActions(gas) {
-      this.loading = true;
-      this.error = null;
-      const newProcessedGAs = [];
-      const newVotesByGA = {};
-
-      try {
-        for (const ga of gas) {
-          if (!ga.ga_id) continue;
-
-          let votes = [];
-          try {
-            const response = await apiService.getVotesForGA(ga.ga_id, 1000, 0);
-            votes = response.data;
-            newVotesByGA[ga.ga_id] = {};
-            votes.forEach(vote => {
-              newVotesByGA[ga.ga_id][vote.drep_id] = vote;
-            });
-          } catch (err) {
-            console.error(`Failed to load votes for GA ${ga.ga_id}:`, err);
-            newVotesByGA[ga.ga_id] = { error: 'Failed to load votes' };
-          }
-
-          newProcessedGAs.push({
-            ...ga,
-          });
-        }
-        this.votesByGA = newVotesByGA;
-        this.processedGAs = newProcessedGAs;
-      } catch (e) {
-        this.error = "Failed to process governance actions or their votes.";
-        console.error(e);
-      } finally {
-        this.loading = false;
-      }
-    },
     getDrepDisplayName(drep) {
       if (drep.drep_id === 'drep1yfjez5zup0gystdvc933w2mn8k64hcy3krvc2namluwjxdcfhm8wd') {
         return 'Sidan Lab';
@@ -165,26 +115,31 @@ export default {
       if (GA_DREP_VOTE_NOT_POSSIBLE.includes(ga.ga_id)) {
         return 'N/A';
       }
-      if (drep.registration_epoch === null || drep.registration_epoch === undefined || (ga.submission_epoch !== null && drep.registration_epoch > ga.submission_epoch)) {
+
+      // Check actual recorded vote first — takes priority over eligibility checks
+      const drepVotes = ga.drep_votes;
+      if (drepVotes) {
+        const vote = drepVotes[drep.drep_id];
+        if (vote) {
+          return vote;
+        }
+      }
+
+      // No recorded vote — check eligibility to determine DNV vs N/A
+      if (drep.registration_epoch === null || drep.registration_epoch === undefined) {
+        // Can't determine eligibility without registration epoch
+        return 'N/A';
+      }
+      if (ga.submission_epoch !== null && drep.registration_epoch > ga.submission_epoch) {
         return 'N/A';
       }
 
-      const gaVotes = this.votesByGA[ga.ga_id];
-      if (!gaVotes || gaVotes.error) {
-        return '-';
-      }
-
-      const vote = gaVotes[drep.drep_id];
-      if (vote) {
-        return vote.vote;
-      }
-
       if (drep.activity_status === 'Active' || drep.activity_status === 'Unknown') {
-         if (ga.submission_epoch && drep.registration_epoch && drep.registration_epoch <= ga.submission_epoch) {
-            if (drep.expires_epoch_no === null || ga.submission_epoch <= drep.expires_epoch_no) {
-                 return 'DNV';
-            }
-         }
+        if (ga.submission_epoch && drep.registration_epoch <= ga.submission_epoch) {
+          if (drep.expires_epoch_no === null || drep.expires_epoch_no === undefined || ga.submission_epoch <= drep.expires_epoch_no) {
+            return 'DNV';
+          }
+        }
       }
       return 'N/A';
     },

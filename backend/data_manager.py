@@ -14,6 +14,62 @@ from . import config, database, koios_api
 
 logger = logging.getLogger(__name__)
 
+IPFS_GATEWAYS = [
+    "https://ipfs.io/ipfs/",
+    "https://cloudflare-ipfs.com/ipfs/",
+    "https://dweb.link/ipfs/",
+]
+
+
+def _normalize_metadata_url(url: str) -> str:
+    """Convert ipfs:// scheme to an HTTP gateway URL."""
+    if url.startswith("ipfs://"):
+        cid = url[len("ipfs://"):]
+        return IPFS_GATEWAYS[0] + cid
+    return url
+
+
+def _unwrap_value(v) -> Optional[str]:
+    """Return v if it's a non-empty string, or v['@value'] if it's a JSON-LD value dict."""
+    if isinstance(v, str):
+        return v or None
+    if isinstance(v, dict):
+        inner = v.get("@value")
+        return inner if isinstance(inner, str) and inner else None
+    return None
+
+
+def _extract_name_from_metadata_json(metadata_json: dict) -> Optional[str]:
+    body = metadata_json.get("body") or {}
+    return (
+        _unwrap_value(metadata_json.get("name"))
+        or _unwrap_value(metadata_json.get("bio", {}).get("name") if isinstance(metadata_json.get("bio"), dict) else None)
+        or _unwrap_value(metadata_json.get("dRepName"))
+        or _unwrap_value(body.get("dRepName"))
+        or _unwrap_value(body.get("givenName"))
+    )
+
+
+async def _try_name_from_koios_updates(conn: Session, drep_id: str) -> None:
+    """Try to derive a DRep name from Koios drep_updates meta_json as a fallback."""
+    try:
+        updates = await _call_koios_with_retry(koios_api.get_drep_updates, drep_id)
+        if not updates:
+            return
+        # Sort by block_time descending, pick first with non-null meta_json
+        updates_with_meta = [u for u in updates if u.get("meta_json")]
+        if not updates_with_meta:
+            return
+        updates_with_meta.sort(key=lambda u: u.get("block_time") or 0, reverse=True)
+        name = _extract_name_from_metadata_json(updates_with_meta[0]["meta_json"])
+        if name and isinstance(name, str):
+            drep_db_data = database.get_drep_by_id(conn, drep_id)
+            if drep_db_data and not drep_db_data.get("name"):
+                database.add_or_update_drep(conn, {"drep_id": drep_id, "name": name[:255]})
+                logger.info(f"Derived name from Koios updates for {drep_id}: {name[:30]}")
+    except Exception as e:
+        logger.warning(f"Could not derive name from Koios updates for {drep_id}: {e}")
+
 
 # Helper function for Koios API calls with retry
 async def _call_koios_with_retry(api_func, *args, **kwargs):
@@ -159,13 +215,15 @@ def _assemble_base_drep_data_from_koios(
         "last_koios_update_epoch": current_epoch,
         "activity_status": _determine_activity_status(drep_koios_data, current_epoch),
         "registration_epoch": drep_koios_data.get("active_epoch_no"),  # May be None
+        "expires_epoch_no": drep_koios_data.get("expires_epoch_no"),
     }
 
 
 async def _fetch_and_set_drep_delegator_count(
     drep_id: str, drep_data_to_store: dict
-) -> None:
-    """Fetches DRep delegator count from Koios and updates drep_data_to_store."""
+) -> list[dict]:
+    """Fetches DRep delegator count from Koios and updates drep_data_to_store.
+    Returns the delegator list for reuse (e.g. CF delegation check)."""
     try:
         delegators_list = await _call_koios_with_retry(
             koios_api.get_drep_delegators, drep_id
@@ -175,16 +233,19 @@ async def _fetch_and_set_drep_delegator_count(
         logger.debug(
             f"Fetched {len(delegators_list_result)} delegators for DRep {drep_id}."
         )
+        return delegators_list_result
     except httpx.RequestError as e:
         logger.error(
             f"Failed to fetch delegators for DRep {drep_id} after retries: {e}",
             exc_info=True,
         )
+        return []
     except Exception as e:
         logger.error(
             f"An unexpected error occurred while fetching delegators for DRep {drep_id}: {e}",
             exc_info=True,
         )
+        return []
 
 
 async def _fetch_and_set_detailed_drep_registration_date(
@@ -199,6 +260,9 @@ async def _fetch_and_set_detailed_drep_registration_date(
     )  # Already set from drep_info
 
     needs_detailed_reg_date = not (drep_in_db and drep_in_db.get("registration_date"))
+    # Also run when registration_epoch is still missing — needed to derive it from drep_updates
+    if drep_data_to_store.get("registration_epoch") is None:
+        needs_detailed_reg_date = True
     # Specific condition for DReps registered before Conway (epoch 540) that might have null active_epoch_no
     if (
         drep_in_db
@@ -246,6 +310,16 @@ async def _fetch_and_set_detailed_drep_registration_date(
                         logger.info(
                             f"DRep {drep_id}: Set 'registration_date' to {drep_data_to_store['registration_date']} from /drep_updates block_time."
                         )
+                        # Derive registration_epoch from block_time using Cardano mainnet Shelley formula
+                        if drep_data_to_store.get("registration_epoch") is None:
+                            SHELLEY_GENESIS_TIME = 1596491091
+                            SHELLEY_START_EPOCH = 208
+                            EPOCH_LENGTH_SECONDS = 432000
+                            derived_epoch = SHELLEY_START_EPOCH + (reg_block_time_from_updates - SHELLEY_GENESIS_TIME) // EPOCH_LENGTH_SECONDS
+                            drep_data_to_store["registration_epoch"] = derived_epoch
+                            logger.info(
+                                f"DRep {drep_id}: Derived 'registration_epoch' to {derived_epoch} from block_time."
+                            )
                     else:
                         logger.warning(
                             f"DRep {drep_id}: No 'block_time' found in first_registration_action, 'registration_date' may not be set by this path."
@@ -357,7 +431,18 @@ async def _process_single_drep_onchain_info(
         drep_id, drep_koios_data, current_epoch
     )
 
-    await _fetch_and_set_drep_delegator_count(drep_id, drep_data_to_store)
+    delegators = await _fetch_and_set_drep_delegator_count(drep_id, drep_data_to_store)
+
+    # Extract CF delegation from already-fetched delegators (avoids duplicate API call)
+    cf_stake_addresses = getattr(config, "CF_STAKE_ADDRESSES", [])
+    if cf_stake_addresses and delegators:
+        cf_total_lovelace = sum(
+            int(d.get("amount", 0))
+            for d in delegators
+            if d.get("stake_address") in cf_stake_addresses
+        )
+        if cf_total_lovelace > 0:
+            drep_data_to_store["cf_delegated_ada"] = cf_total_lovelace // 1_000_000
 
     drep_in_db = None
     try:
@@ -370,6 +455,22 @@ async def _process_single_drep_onchain_info(
     await _fetch_and_set_detailed_drep_registration_date(
         drep_id, drep_data_to_store, drep_in_db
     )
+
+    # Never overwrite good data with nulls from transient API responses
+    PRESERVE_FIELDS = ["registration_epoch", "total_voting_power", "cf_delegated_ada"]
+    if drep_in_db:
+        for field in PRESERVE_FIELDS:
+            if drep_data_to_store.get(field) is None and drep_in_db.get(field) is not None:
+                del drep_data_to_store[field]
+
+    # Fallback: derive registration_epoch from earliest vote if still missing
+    if drep_data_to_store.get("registration_epoch") is None:
+        earliest = database.get_earliest_vote_epoch(conn, drep_id)
+        if earliest is not None:
+            drep_data_to_store["registration_epoch"] = earliest
+            logger.info(
+                f"DRep {drep_id}: Derived registration_epoch={earliest} from earliest vote."
+            )
 
     try:
         database.add_or_update_drep(conn, drep_data_to_store)
@@ -489,7 +590,7 @@ async def update_drep_offchain_metadata_for_tracked(conn: Session):
         f"Updating off-chain metadata for {len(tracked_drep_ids_for_metadata)} DReps."
     )
 
-    async with httpx.AsyncClient(timeout=config.REQUESTS_TIMEOUT) as client:
+    async with httpx.AsyncClient(timeout=config.REQUESTS_TIMEOUT, follow_redirects=True) as client:
         for drep_id in tracked_drep_ids_for_metadata:
             drep_db_data = None
             try:
@@ -529,12 +630,13 @@ async def update_drep_offchain_metadata_for_tracked(conn: Session):
 
             status = "Error Fetching"
             try:
-                logger.info(f"Fetching metadata for {drep_id} from {metadata_url}")
+                fetch_url = _normalize_metadata_url(metadata_url)
+                logger.info(f"Fetching metadata for {drep_id} from {fetch_url}")
                 req_headers = {
                     "User-Agent": "DRepTracker/1.0 (cardano-community/drep-tracker)"
                 }
 
-                response = await client.get(metadata_url, headers=req_headers)
+                response = await client.get(fetch_url, headers=req_headers)
                 response.raise_for_status()
 
                 fetched_content = response.content
@@ -551,16 +653,8 @@ async def update_drep_offchain_metadata_for_tracked(conn: Session):
                     ):
                         try:
                             metadata_json = response.json()
-                            drep_name = (
-                                metadata_json.get("name")
-                                or metadata_json.get("bio", {}).get("name")
-                                or metadata_json.get("dRepName", {}).get("@value")
-                                or metadata_json.get("body", {})
-                                .get("dRepName", {})
-                                .get("@value")
-                                or metadata_json.get("body", {}).get("givenName")
-                            )
-                            if drep_name and isinstance(drep_name, str):
+                            drep_name = _extract_name_from_metadata_json(metadata_json)
+                            if drep_name:
                                 try:
                                     database.add_or_update_drep(
                                         conn,
@@ -586,22 +680,57 @@ async def update_drep_offchain_metadata_for_tracked(conn: Session):
 
             except httpx.HTTPStatusError as http_err:
                 logger.error(
-                    f"HTTP error fetching metadata for {drep_id} from {metadata_url}: {http_err.response.status_code} - {http_err.response.text[:100]}"
+                    f"HTTP error fetching metadata for {drep_id} from {fetch_url}: {http_err.response.status_code} - {http_err.response.text[:100]}"
                 )
                 status = f"Error Fetching: HTTP {http_err.response.status_code}"
+                await _try_name_from_koios_updates(conn, drep_id)
             except httpx.RequestError as req_err:
                 logger.error(
-                    f"Request error fetching metadata for {drep_id} from {metadata_url}: {req_err}"
+                    f"Request error fetching metadata for {drep_id} from {fetch_url}: {req_err}"
                 )
-                status = f"Error Fetching: {type(req_err).__name__}"
+                # Retry with fallback IPFS gateways if applicable
+                if "/ipfs/" in fetch_url:
+                    cid = fetch_url.split("/ipfs/", 1)[1]
+                    for gateway in IPFS_GATEWAYS[1:]:
+                        fallback_url = gateway + cid
+                        try:
+                            logger.info(f"Retrying IPFS fetch for {drep_id} via {fallback_url}")
+                            response = await client.get(fallback_url, headers=req_headers)
+                            response.raise_for_status()
+                            fetched_content = response.content
+                            blake2b_hash_obj = hashlib.blake2b(digest_size=32)
+                            blake2b_hash_obj.update(fetched_content)
+                            actual_hash_blake2b = blake2b_hash_obj.hexdigest()
+                            if actual_hash_blake2b == expected_hash:
+                                status = "Match"
+                                logger.info(f"Metadata for {drep_id} matches via IPFS fallback {fallback_url}.")
+                                if not drep_db_data.get("name") or drep_db_data.get("name") == "Name N/A":
+                                    try:
+                                        metadata_json = response.json()
+                                        drep_name = _extract_name_from_metadata_json(metadata_json)
+                                        if drep_name and isinstance(drep_name, str):
+                                            database.add_or_update_drep(conn, {"drep_id": drep_id, "name": drep_name[:255]})
+                                    except Exception:
+                                        pass
+                            else:
+                                status = "Mismatch"
+                            break
+                        except Exception:
+                            continue
+                    else:
+                        status = f"Error Fetching: {type(req_err).__name__}"
+                        await _try_name_from_koios_updates(conn, drep_id)
+                else:
+                    status = f"Error Fetching: {type(req_err).__name__}"
+                    await _try_name_from_koios_updates(conn, drep_id)
             except hashlib.error as hash_err:
                 logger.error(
-                    f"Error calculating hash for metadata of {drep_id} from {metadata_url}: {hash_err}"
+                    f"Error calculating hash for metadata of {drep_id} from {fetch_url}: {hash_err}"
                 )
                 status = "Error Processing: Hash Calc Failed"
             except Exception as e:
                 logger.error(
-                    f"Generic error processing metadata for {drep_id} from {metadata_url}: {e}",
+                    f"Generic error processing metadata for {drep_id} from {fetch_url}: {e}",
                     exc_info=True,
                 )
                 status = "Error Processing"
@@ -792,11 +921,14 @@ def _process_and_store_single_vote(
         )
         return
 
+    meta_url = vote_from_api.get("meta_url")
     vote_data_for_db = {
         "drep_id": drep_id_from_vote,
         "ga_id": ga_id,
         "vote": vote_from_api.get("vote"),
-        "voted_epoch": None,
+        "voted_epoch": vote_from_api.get("epoch_no"),
+        "has_rationale": 1 if meta_url else 0,
+        "vote_anchor_url": meta_url,
     }
     try:
         database.add_drep_vote(conn, vote_data_for_db)
@@ -991,6 +1123,65 @@ def get_voting_power_per_drep() -> pd.DataFrame:
         "SELECT drep_id, total_voting_power FROM dreps ORDER BY total_voting_power DESC",
         database.engine,
     )
+
+
+async def update_cf_delegation_amounts(conn: Session):
+    """
+    For each tracked DRep, check if CF stake addresses are among their delegators.
+    Updates cf_delegated_ada on the DRep record.
+    """
+    from . import config as cfg
+
+    cf_stake_addresses = getattr(cfg, "CF_STAKE_ADDRESSES", [])
+    if not cf_stake_addresses:
+        logger.debug("No CF_STAKE_ADDRESSES configured; skipping CF delegation update.")
+        return
+
+    tracked_ids = database.get_tracked_drep_ids(conn)
+    if not tracked_ids:
+        logger.info("No tracked DReps to update CF delegation amounts for.")
+        return
+
+    # Fetch current epoch once for setting delegation_epoch
+    current_epoch = await get_current_epoch()
+
+    logger.info(
+        f"Updating CF delegation amounts for {len(tracked_ids)} tracked DReps."
+    )
+    for drep_id in tracked_ids:
+        try:
+            delegators = await _call_koios_with_retry(
+                koios_api.get_drep_delegators, drep_id
+            )
+            if not delegators:
+                continue
+
+            cf_total_lovelace = 0
+            for delegator in delegators:
+                stake_addr = delegator.get("stake_address")
+                if stake_addr and stake_addr in cf_stake_addresses:
+                    amount = int(delegator.get("amount", 0))
+                    cf_total_lovelace += amount
+
+            if cf_total_lovelace > 0:
+                cf_ada = cf_total_lovelace // 1_000_000
+                drep = database.get_drep_by_id(conn, drep_id)
+                if drep:
+                    update_data = {"drep_id": drep_id, "cf_delegated_ada": cf_ada}
+                    # Only set delegation_epoch if not already set (preserve first delegation epoch for tenure)
+                    if not drep.get("delegation_epoch"):
+                        update_data["delegation_epoch"] = current_epoch
+                    database.add_or_update_drep(conn, update_data)
+                    logger.info(
+                        f"DRep {drep_id}: CF delegated {cf_ada} ADA."
+                    )
+
+            await asyncio.sleep(config.KOIOS_API_CALL_DELAY_SECONDS)
+        except Exception as e:
+            logger.error(
+                f"Error updating CF delegation for DRep {drep_id}: {e}",
+                exc_info=True,
+            )
 
 
 def get_votes_matrix() -> pd.DataFrame:

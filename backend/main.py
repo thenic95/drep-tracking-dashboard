@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import sqlite3
 from contextlib import contextmanager
@@ -7,7 +8,9 @@ from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import (
+    cf_delegation,
     config,  # For LOG_LEVEL, potentially other API configs
+    data_manager,
     database,
     scheduler,  # Assuming scheduler.py is in the same directory (backend)
     schemas,
@@ -62,6 +65,17 @@ mount_panel(app, "/dashboard", dashboard)
 _scheduler_thread = None
 
 
+async def _retry_failed_metadata():
+    """On startup, re-attempt metadata fetch for all tracked DReps (covers previously failed ones)."""
+    db = database.get_db_connection()
+    try:
+        await data_manager.update_drep_offchain_metadata_for_tracked(db)
+    except Exception as e:
+        logger.error(f"Error in startup metadata retry: {e}", exc_info=True)
+    finally:
+        db.close()
+
+
 @app.on_event("startup")
 async def startup_event():
     global _scheduler_thread
@@ -96,6 +110,8 @@ async def startup_event():
     else:
         logger.info("Scheduler thread already running.")
         print("FastAPI Startup: Scheduler thread already running.")
+
+    asyncio.create_task(_retry_failed_metadata())
 
 
 # CORS Middleware
@@ -304,6 +320,40 @@ def get_governance_actions_endpoint(
         ) from e
 
 
+# -- Vote Matrix Endpoint --
+# NOTE: This must be defined BEFORE the parameterized {ga_id} route below,
+# otherwise FastAPI matches "vote-matrix" as a {ga_id} value.
+@app.get("/api/governance-actions/vote-matrix", response_model=schemas.VoteMatrixResponse)
+def get_vote_matrix(
+    db: sqlite3.Connection = Depends(get_db_dep),
+    ga_limit: int = Query(20, ge=1, le=200),
+    ga_offset: int = Query(0, ge=0),
+):
+    """Returns governance actions with votes pre-filtered to tracked DReps only."""
+    logger.info(
+        f"Endpoint GET /api/governance-actions/vote-matrix hit with ga_limit={ga_limit}, ga_offset={ga_offset}"
+    )
+    try:
+        tracked_drep_ids = database.get_tracked_drep_ids(db)
+        gas = database.get_all_governance_actions(db, limit=ga_limit, offset=ga_offset)
+
+        result_gas = []
+        for ga in gas:
+            votes = database.get_votes_for_ga_by_dreps(db, ga["ga_id"], tracked_drep_ids)
+            drep_votes = {v["drep_id"]: v["vote"] for v in votes}
+            result_gas.append({**ga, "drep_votes": drep_votes})
+
+        # Get total count for pagination
+        all_ga_ids = database.get_all_ga_ids(db)
+        return {"governance_actions": result_gas, "total_count": len(all_ga_ids)}
+    except Exception as e:
+        logger.error(f"Error in /api/governance-actions/vote-matrix: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail="Internal server error processing vote matrix.",
+        ) from e
+
+
 @app.get("/api/governance-actions/{ga_id}/votes", response_model=List[schemas.DRepVote])
 def get_votes_for_governance_action(
     ga_id: str,
@@ -379,6 +429,108 @@ def get_votes_by_drep_endpoint(
             status_code=500,
             detail=f"Internal server error processing votes for DRep {drep_id}.",
         ) from e
+
+
+# -- CF Delegation Endpoints --
+@app.get("/api/cf-delegation/dreps", response_model=List[schemas.CFDelegationDRepResponse])
+def get_cf_delegation_dreps(db: sqlite3.Connection = Depends(get_db_dep)):
+    """Returns CF-delegated DReps with computed metrics."""
+    logger.info("Endpoint GET /api/cf-delegation/dreps hit")
+    try:
+        current_epoch = None
+        try:
+            current_epoch = asyncio.run(data_manager.get_current_epoch())
+        except Exception:
+            pass
+
+        if current_epoch is None:
+            current_epoch = 0
+
+        thresholds = cf_delegation.get_thresholds(db)
+        dreps = database.get_cf_delegated_dreps(db)
+
+        result = []
+        for drep_data in dreps:
+            metrics = cf_delegation.compute_drep_metrics(
+                db, drep_data, current_epoch, thresholds
+            )
+            result.append({**drep_data, **metrics})
+        return result
+    except Exception as e:
+        logger.error(f"Error in /api/cf-delegation/dreps: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail="Internal server error processing CF delegation DReps.",
+        ) from e
+
+
+@app.put("/api/cf-delegation/dreps/{drep_id}/delegation-date")
+def update_delegation_date(
+    drep_id: str,
+    body: schemas.DelegationDateUpdate,
+    db: sqlite3.Connection = Depends(get_db_dep),
+):
+    """Sets the user-defined delegation date for a DRep (used to calculate tenure)."""
+    logger.info(f"Endpoint PUT /api/cf-delegation/dreps/{drep_id}/delegation-date hit")
+    drep = database.get_drep_by_id(db, drep_id)
+    if not drep:
+        raise HTTPException(status_code=404, detail=f"DRep {drep_id} not found.")
+    database.update_drep_delegation_date(db, drep_id, body.delegation_date)
+    return {"drep_id": drep_id, "delegation_date": body.delegation_date}
+
+
+@app.put("/api/cf-delegation/dreps/{drep_id}/alignment-score")
+def update_alignment_score(
+    drep_id: str,
+    body: schemas.AlignmentScoreUpdate,
+    db: sqlite3.Connection = Depends(get_db_dep),
+):
+    """Updates the alignment score for a DRep."""
+    logger.info(f"Endpoint PUT /api/cf-delegation/dreps/{drep_id}/alignment-score hit")
+    drep = database.get_drep_by_id(db, drep_id)
+    if not drep:
+        raise HTTPException(status_code=404, detail=f"DRep {drep_id} not found.")
+    database.update_drep_alignment_score(db, drep_id, body.score)
+    return {"drep_id": drep_id, "alignment_score": body.score}
+
+
+@app.put("/api/cf-delegation/dreps/{drep_id}/delegation")
+def update_cf_delegation(
+    drep_id: str,
+    body: schemas.CFDelegationUpdate,
+    db: sqlite3.Connection = Depends(get_db_dep),
+):
+    """Manual override for CF delegation epoch and amount."""
+    logger.info(f"Endpoint PUT /api/cf-delegation/dreps/{drep_id}/delegation hit")
+    drep = database.get_drep_by_id(db, drep_id)
+    if not drep:
+        raise HTTPException(status_code=404, detail=f"DRep {drep_id} not found.")
+    database.update_drep_cf_delegation(
+        db, drep_id, body.cf_delegated_ada, body.delegation_epoch
+    )
+    return {
+        "drep_id": drep_id,
+        "delegation_epoch": body.delegation_epoch,
+        "cf_delegated_ada": body.cf_delegated_ada,
+    }
+
+
+@app.get("/api/cf-delegation/thresholds", response_model=schemas.CFThresholdSettings)
+def get_cf_thresholds(db: sqlite3.Connection = Depends(get_db_dep)):
+    """Returns current CF delegation threshold settings."""
+    return cf_delegation.get_thresholds(db)
+
+
+@app.put("/api/cf-delegation/thresholds", response_model=schemas.CFThresholdSettings)
+def update_cf_thresholds(
+    body: schemas.CFThresholdSettings,
+    db: sqlite3.Connection = Depends(get_db_dep),
+):
+    """Updates CF delegation threshold settings."""
+    logger.info("Endpoint PUT /api/cf-delegation/thresholds hit")
+    for key, value in body.model_dump().items():
+        database.set_cf_threshold(db, key, str(value))
+    return cf_delegation.get_thresholds(db)
 
 
 # Root endpoint for basic API health check
